@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// this package handles the actual On Demand Requests
+// and implements the core/odr.Odr interface that is used by
+// core.odr.Access
+// all request/timeout/peer logic is in this package
+// leaving validations and actual core request types in core/odr
+// Now a separate package but should probably just be in les and
+// then deliver and register/unregister can remain unexported
+
 const (
 	errInvalidMsgId   = errors.New("")
 	errInvalidMsgCode = errors.New("")
@@ -36,8 +44,7 @@ type Msg struct {
 	data interface{}
 }
 
-// request wraps core/query.Query with request related logic
-// context can be added with quit channel
+// request wraps core/odr.Request with request related logic
 type request struct {
 	requests.Request
 	id          string
@@ -65,22 +72,35 @@ func (self *Odr) Stop() {
 	close(self.quit)
 }
 
+func (self *Odr) Register(p peer) error {
+	return self.peers.register(p)
+}
+
+func (self *Odr) Unregister(p peer) error {
+	return self.peers.unregister(p)
+}
+
 // Deliver is called by the LES protocol manager to deliver ODR reply messages to waiting requests
 // can be called parallel
 func (self *Odr) Deliver(peer *peer, mgs *Msg) error {
 	self.lock.Lock()
 	defer self.lock.Unlock()
 
+	// match request id
 	req, found := self.requests[msg.id]
 	if !found {
 		return errInvalidMsgId
 	}
+	// match response type (message code?) to request code
 	if msg.code != req.Code() {
 		return errInvalidMsgCode
 	}
+	// check validity (core.Request.Valid does not write into request, the response is always exactly msg.data)
 	if err := req.Valid(msg.data); err != nil {
 		return errInvalidMsgData
 	}
+	// this puts the first request through
+	// when reqest is not listening anymore (just before it is deleted from requests map) it gets ignored so its safe
 	select {
 	case req.deliveryChan <- msg.data:
 		self.peers.Promote(peer)
@@ -94,24 +114,28 @@ func (self *Odr) Deliver(peer *peer, mgs *Msg) error {
 // or the context is cancelled or request times out
 //
 func (self *Odr) Retrieve(r requests.Request, cancel chan bool) (interface{}, error) {
+	// generate some id for the request which delivery will match
 	id := newId()
 	req := &request{
 		Request:     r,
+		id:          id,
 		deliverChan: make(chan err),
 	}
+	// enter request in global request map
 	self.lock.Lock()
 	self.requests[id] = req
 	self.unlock.Lock()
 
 	timeout := time.After(requestTimeout)
 	errc := make(chan error)
+	// spawn a waiter routine on the request
 	go func() {
 		select {
 		case resp = <-req.deliverChan:
 			glog.V(LogLevel).Infof("networkRequest success")
 			req.resp = resp
 			close(errc)
-		case <-req.timeout:
+		case <-timeout:
 			glog.V(LogLevel).Infof("networkRequest timeout")
 			errc <- errRequestTimeout
 			self.lock.Lock()
@@ -124,8 +148,10 @@ func (self *Odr) Retrieve(r requests.Request, cancel chan bool) (interface{}, er
 		}
 	}()
 
+	// this sends to best N peer in parallel
+	// maybe better to keep one at a time but make sure not blocking on
+	// network write
 	var peers []*peer
-	// try until we got at least one peer
 	for {
 		peers := self.peers.bestN(maxpeers)
 		if len(peers) > 0 {
