@@ -104,7 +104,6 @@ type Ethereum struct {
 	accountManager  *accounts.Manager
 	pow             *ethash.Ethash
 	protocolManager *ProtocolManager
-	downloader      *downloader.Downloader
 	SolcPath        string
 	solc            *compiler.Solidity
 
