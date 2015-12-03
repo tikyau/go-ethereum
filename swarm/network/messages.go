@@ -5,8 +5,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/ethereum/go-ethereum/bzz/services/swap"
-	"github.com/ethereum/go-ethereum/bzz/storage"
+	"github.com/ethereum/go-ethereum/swarm/services/swap"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common/chequebook"
 	"github.com/ethereum/go-ethereum/common/kademlia"
 )

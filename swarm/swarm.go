@@ -1,12 +1,9 @@
-package bzz
+package swarm
 
 import (
 	"bytes"
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/bzz/api"
-	"github.com/ethereum/go-ethereum/bzz/network"
-	"github.com/ethereum/go-ethereum/bzz/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/chequebook"
 	"github.com/ethereum/go-ethereum/common/httpclient"
@@ -18,6 +15,9 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/discover"
+	"github.com/ethereum/go-ethereum/swarm/api"
+	"github.com/ethereum/go-ethereum/swarm/network"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 )
 
 // the swarm stack

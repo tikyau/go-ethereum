@@ -19,8 +19,8 @@ import (
 	"net"
 	"strconv"
 
-	bzzswap "github.com/ethereum/go-ethereum/bzz/services/swap"
-	"github.com/ethereum/go-ethereum/bzz/storage"
+	bzzswap "github.com/ethereum/go-ethereum/swarm/services/swap"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common/chequebook"
 	"github.com/ethereum/go-ethereum/common/swap"
 	"github.com/ethereum/go-ethereum/errs"

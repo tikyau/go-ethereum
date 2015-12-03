@@ -7,7 +7,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/ethereum/go-ethereum/bzz/storage"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/logger"
 	"github.com/ethereum/go-ethereum/logger/glog"

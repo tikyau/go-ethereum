@@ -34,8 +34,6 @@ import (
 	"github.com/codegangsta/cli"
 	"github.com/ethereum/ethash"
 	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/bzz"
-	bzzapi "github.com/ethereum/go-ethereum/bzz/api"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -56,6 +54,8 @@ import (
 	"github.com/ethereum/go-ethereum/rpc/comms"
 	"github.com/ethereum/go-ethereum/rpc/shared"
 	"github.com/ethereum/go-ethereum/rpc/useragent"
+	"github.com/ethereum/go-ethereum/swarm"
+	bzzapi "github.com/ethereum/go-ethereum/swarm/api"
 	"github.com/ethereum/go-ethereum/whisper"
 	"github.com/ethereum/go-ethereum/xeth"
 )
@@ -597,7 +597,10 @@ func MakePasswordList(ctx *cli.Context) []string {
 
 func UnlockAccount(ctx *cli.Context, accman *accounts.Manager, address string, i int, passwords []string) (common.Address, string) {
 	// Try to unlock the specified account a few times
-	account := MakeAddress(accman, address)
+	account, err := MakeAddress(accman, address)
+	if err != nil {
+		Fatalf("unable to unlock account %v: %v", address, err)
+	}
 
 	for trials := 0; trials < 3; trials++ {
 		prompt := fmt.Sprintf("Unlocking account %s | Attempt %d/%d", address, trials+1, 3)
@@ -790,7 +793,7 @@ func MakeSystemNode(name, version string, extra []byte, ctx *cli.Context) *node.
 		}
 		swap := ctx.GlobalBool(SwarmSwapDisabled.Name)
 		if err := stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
-			return bzz.NewSwarm(ctx, bzzconfig, swap)
+			return swarm.NewSwarm(ctx, bzzconfig, swap)
 		}); err != nil {
 			Fatalf("Failed to register the Swarm service: %v", err)
 		}

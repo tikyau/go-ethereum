@@ -7,7 +7,7 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/ethereum/go-ethereum/bzz/storage"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 )
 
 func main() {

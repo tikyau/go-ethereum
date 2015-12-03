@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ethereum/go-ethereum/bzz/storage"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/kademlia"
 	"github.com/ethereum/go-ethereum/logger"

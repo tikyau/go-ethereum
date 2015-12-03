@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ethereum/go-ethereum/bzz/network"
-	"github.com/ethereum/go-ethereum/bzz/services/swap"
-	"github.com/ethereum/go-ethereum/bzz/storage"
+	"github.com/ethereum/go-ethereum/swarm/network"
+	"github.com/ethereum/go-ethereum/swarm/services/swap"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )

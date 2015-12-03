@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/bzz/storage"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 

@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/bzz"
-	"github.com/ethereum/go-ethereum/bzz/api"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/swarm/api"
 )
 
 var port = 8500
@@ -29,7 +29,7 @@ func bzzREPL(t *testing.T, configf func(*api.Config)) (string, string, *testjeth
 	}
 	tmp, repl, stack := testREPL(t, func(n *node.Node) {
 		if err := n.Register(func(ctx *node.ServiceContext) (node.Service, error) {
-			return bzz.NewSwarm(ctx, config, false)
+			return swarm.NewSwarm(ctx, config, false)
 		}); err != nil {
 			t.Fatalf("Failed to register the Swarm service: %v", err)
 		}
