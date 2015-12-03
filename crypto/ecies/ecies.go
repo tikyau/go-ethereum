@@ -127,6 +127,7 @@ func (prv *PrivateKey) GenerateShared(pub *PublicKey, skLen, macLen int) (sk []b
 	if skLen+macLen > MaxSharedKeyLength(pub) {
 		return nil, ErrSharedKeyTooBig
 	}
+
 	x, _ := pub.Curve.ScalarMult(pub.X, pub.Y, prv.D.Bytes())
 	if x == nil {
 		return nil, ErrSharedKeyIsPointAtInfinity
