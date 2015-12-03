@@ -98,7 +98,6 @@ func (n *Node) Register(constructor ServiceConstructor) error {
 	if n.server != nil {
 		return ErrNodeRunning
 	}
-
 	n.serviceFuncs = append(n.serviceFuncs, constructor)
 	return nil
 }
@@ -247,8 +246,9 @@ func (n *Node) Service(service interface{}) error {
 		return ErrNodeStopped
 	}
 	// Otherwise try to find the service to return
-	if running, ok := n.services[reflect.ValueOf(service).Elem().Type()]; ok {
-		reflect.ValueOf(service).Elem().Set(reflect.ValueOf(running))
+	element := reflect.ValueOf(service).Elem()
+	if running, ok := n.services[element.Type()]; ok {
+		element.Set(reflect.ValueOf(running))
 		return nil
 	}
 	return ErrServiceUnknown

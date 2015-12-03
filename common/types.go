@@ -95,10 +95,10 @@ func HexToAddress(s string) Address    { return BytesToAddress(FromHex(s)) }
 // IsHexAddress verifies whether a string can represent a valid hex-encoded
 // Ethereum address or not.
 func IsHexAddress(s string) bool {
-	if len(s) == 2+2*AddressLength && IsHex(s[2:]) {
+	if len(s) == 2+2*AddressLength && IsHex(s) {
 		return true
 	}
-	if len(s) == 2*AddressLength && IsHex(s) {
+	if len(s) == 2*AddressLength && IsHex("0x"+s) {
 		return true
 	}
 	return false
@@ -129,6 +129,16 @@ func (a *Address) Set(other Address) {
 	}
 }
 
+// PP Pretty Prints a byte slice in the following format:
+// 	hex(value[:4])...(hex[len(value)-4:])
+func PP(value []byte) string {
+	if len(value) <= 8 {
+		return Bytes2Hex(value)
+	}
+
+	return fmt.Sprintf("%x...%x", value[:4], value[len(value)-4])
+}
+
 func (a *Address) MarshalJSON() (out []byte, err error) {
 	return []byte(quote(a.Hex())), nil
 }
@@ -140,14 +150,4 @@ func (m *Address) UnmarshalJSON(value []byte) error {
 
 func quote(s string) string {
 	return `"` + s + `"`
-}
-
-// PP Pretty Prints a byte slice in the following format:
-// 	hex(value[:4])...(hex[len(value)-4:])
-func PP(value []byte) string {
-	if len(value) <= 8 {
-		return Bytes2Hex(value)
-	}
-
-	return fmt.Sprintf("%x...%x", value[:4], value[len(value)-4])
 }

@@ -46,8 +46,9 @@ func (ctx *ServiceContext) OpenDatabase(name string, cache int) (ethdb.Database,
 
 // Service retrieves a currently running service registered of a specific type.
 func (ctx *ServiceContext) Service(service interface{}) error {
-	if running, ok := ctx.services[reflect.ValueOf(service).Elem().Type()]; ok {
-		reflect.ValueOf(service).Elem().Set(reflect.ValueOf(running))
+	element := reflect.ValueOf(service).Elem()
+	if running, ok := ctx.services[element.Type()]; ok {
+		element.Set(reflect.ValueOf(running))
 		return nil
 	}
 	return ErrServiceUnknown
