@@ -59,7 +59,6 @@ type discoverTable interface {
 	Self() *discover.Node
 	Close()
 	Bootstrap([]*discover.Node)
-	Resolve(target discover.NodeID) *discover.Node
 	Lookup(target discover.NodeID) []*discover.Node
 	ReadRandomNodes([]*discover.Node) int
 }
@@ -81,8 +80,6 @@ type task interface {
 type dialTask struct {
 	flags connFlag
 	dest  *discover.Node
-	// Holds updated record if the node was incomplete and got resolved.
-	resolved *discover.Node
 }
 
 // discoverTask runs discovery table operations.
@@ -136,7 +133,7 @@ func (s *dialstate) newTasks(nRunning int, peers map[discover.NodeID]*Peer, now 
 	// Compute number of dynamic dials necessary at this point.
 	needDynDials := s.maxDynDials
 	for _, p := range peers {
-		if p.conn.is(dynDialedConn) {
+		if p.rw.is(dynDialedConn) {
 			needDynDials--
 		}
 	}
@@ -198,10 +195,6 @@ func (s *dialstate) taskDone(t task, now time.Time) {
 	case *dialTask:
 		s.hist.add(t.dest.ID, now.Add(dialHistoryExpiration))
 		delete(s.dialing, t.dest.ID)
-		// Cache the resolved IP so we don't resolve for every try.
-		if t.resolved != nil {
-			s.static[t.dest.ID] = t.resolved
-		}
 	case *discoverTask:
 		if t.bootstrap {
 			s.bootstrapped = true
@@ -212,38 +205,17 @@ func (s *dialstate) taskDone(t task, now time.Time) {
 }
 
 func (t *dialTask) Do(srv *Server) {
-	dest := t.dest
-	if t.dest.Incomplete() {
-		// Resolve incomplete nodes using discovery.
-		if srv.ntab == nil {
-			glog.V(logger.Debug).Infof("can't resolve %x, discovery is disabled", t.dest.ID[:6])
-			return
-		}
-		if dest = srv.ntab.Resolve(t.dest.ID); dest == nil {
-			glog.V(logger.Debug).Infof("resolving %x failed", t.dest.ID[:6])
-			return
-		}
-		glog.V(logger.Debug).Infof("resolved %x: %v:%d", t.dest.ID[:6], dest.IP, dest.TCP)
-		t.resolved = dest
-	}
-	addr := &net.TCPAddr{IP: dest.IP, Port: int(dest.TCP)}
-	remotePubkey, err := dest.ID.Pubkey()
-	if err != nil {
-		glog.V(logger.Warn).Infof("aborted dialing (invalid pubkey) %v\n", t.dest)
-		return
-	}
+	addr := &net.TCPAddr{IP: t.dest.IP, Port: int(t.dest.TCP)}
 	glog.V(logger.Debug).Infof("dialing %v\n", t.dest)
 	fd, err := srv.Dialer.Dial("tcp", addr.String())
 	if err != nil {
-		// TODO: maybe try resolving the ID once if this is a static dial
 		glog.V(logger.Detail).Infof("dial error: %v", err)
 		return
 	}
 	mfd := newMeteredConn(fd, false)
-	dc := newDevConn(mfd, srv.PrivateKey, remotePubkey)
-	srv.setupConn(dc, t.flags, dest)
-}
 
+	srv.setupConn(mfd, t.flags, t.dest)
+}
 func (t *dialTask) String() string {
 	return fmt.Sprintf("%v %x %v:%d", t.flags, t.dest.ID[:8], t.dest.IP, t.dest.TCP)
 }

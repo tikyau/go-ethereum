@@ -67,36 +67,21 @@ func newNode(id NodeID, ip net.IP, udpPort, tcpPort uint16) *Node {
 	}
 }
 
-func NewNode(id NodeID, ip net.IP, udpPort, tcpPort uint16) *Node {
-	return newNode(id, ip, udpPort, tcpPort)
-}
-
-func (n *Node) Sha() common.Hash {
-	return n.sha
-}
-
 func (n *Node) addr() *net.UDPAddr {
 	return &net.UDPAddr{IP: n.IP, Port: int(n.UDP)}
-}
-
-// Incomplete returns true for nodes with no IP address.
-func (n *Node) Incomplete() bool {
-	return n.IP == nil
 }
 
 // The string representation of a Node is a URL.
 // Please see ParseNode for a description of the format.
 func (n *Node) String() string {
-	u := url.URL{Scheme: "enode"}
-	if n.Incomplete() {
-		u.Host = fmt.Sprintf("%x", n.ID[:])
-	} else {
-		addr := net.TCPAddr{IP: n.IP, Port: int(n.TCP)}
-		u.User = url.User(fmt.Sprintf("%x", n.ID[:]))
-		u.Host = addr.String()
-		if n.UDP != n.TCP {
-			u.RawQuery = "discport=" + strconv.Itoa(int(n.UDP))
-		}
+	addr := net.TCPAddr{IP: n.IP, Port: int(n.TCP)}
+	u := url.URL{
+		Scheme: "enode",
+		User:   url.User(fmt.Sprintf("%x", n.ID[:])),
+		Host:   addr.String(),
+	}
+	if n.UDP != n.TCP {
+		u.RawQuery = "discport=" + strconv.Itoa(int(n.UDP))
 	}
 	return u.String()
 }
@@ -105,20 +90,12 @@ func (n *Node) String() string {
 //
 // A node URL has scheme "enode".
 //
-// There are two basic forms of nodes:
-//   - complete nodes, which have IP/Port information
-//   - incomplete nodes, which only have the node ID
-//
-// For incomplete nodes, the URL is of the form
-//
-//    enode://<hex node id>.
-//
-// For complete nodes, the node ID is encoded in the username portion
-// of the URL, separated from the host by an @ sign. The hostname can
-// only be given as an IP address, DNS domain names are not allowed.
-// The port in the host name section is the TCP listening port. If the
-// TCP and UDP (discovery) ports differ, the UDP port is specified as
-// query parameter "discport".
+// The hexadecimal node ID is encoded in the username portion of the
+// URL, separated from the host by an @ sign. The hostname can only be
+// given as an IP address, DNS domain names are not allowed. The port
+// in the host name section is the TCP listening port. If the TCP and
+// UDP (discovery) ports differ, the UDP port is specified as query
+// parameter "discport".
 //
 // In the following example, the node URL describes
 // a node with IP address 10.3.58.6, TCP listening port 30303
@@ -134,13 +111,6 @@ func ParseNode(rawurl string) (*Node, error) {
 	u, err := url.Parse(rawurl)
 	if u.Scheme != "enode" {
 		return nil, errors.New("invalid URL scheme, want \"enode\"")
-	}
-	// Try parsing as incomplete node first.
-	if u.User == nil && u.Host != "" {
-		if id, err = HexID(u.Host); err != nil {
-			return nil, fmt.Errorf("invalid node ID (%v)", err)
-		}
-		return newNode(id, nil, 0, 0), nil
 	}
 	// Parse the Node ID from the user portion.
 	if u.User == nil {
