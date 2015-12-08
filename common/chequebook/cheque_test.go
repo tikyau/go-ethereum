@@ -277,7 +277,7 @@ func TestDeposit(t *testing.T) {
 	}
 
 	// autodeposit every 10ms if new cheque issued
-	interval := 10 * time.Millisecond
+	interval := 30 * time.Millisecond
 	chbook.AutoDeposit(interval, common.Big1, balance)
 	_, err = chbook.Issue(recipient, amount)
 	if err != nil {
@@ -337,6 +337,7 @@ func TestDeposit(t *testing.T) {
 	}
 
 	chbook.AutoDeposit(1*interval, common.Big0, balance)
+	chbook.Stop()
 
 	_, err = chbook.Issue(recipient, common.Big1)
 	if err != nil {
@@ -348,7 +349,6 @@ func TestDeposit(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	chbook.Stop()
 	time.Sleep(1 * interval)
 
 	if len(backend.txs) != 5 {
