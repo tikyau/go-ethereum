@@ -50,8 +50,6 @@ func TestOn(t *testing.T) {
 }
 
 func TestBootstrap(t *testing.T) {
-	t.Parallel()
-	// r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	test := func(test *bootstrapTest) bool {
 		// for any node kad.le, Target and N
@@ -114,7 +112,6 @@ func TestBootstrap(t *testing.T) {
 }
 
 func TestFindClosest(t *testing.T) {
-	t.Parallel()
 
 	test := func(test *FindClosestTest) bool {
 		// for any node kad.le, Target and N
@@ -193,7 +190,6 @@ var (
 )
 
 func TestProxAdjust(t *testing.T) {
-	t.Parallel()
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	self := gen(Address{}, r).(Address)
 	params := NewKadParams()
