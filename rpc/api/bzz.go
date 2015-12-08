@@ -20,11 +20,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/bzz"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/rpc/codec"
 	"github.com/ethereum/go-ethereum/rpc/shared"
+	"github.com/ethereum/go-ethereum/swarm"
 )
 
 const (
@@ -34,7 +34,7 @@ const (
 // eth api provider
 // See https://github.com/ethereum/wiki/wiki/JSON-RPC
 type bzzApi struct {
-	swarm   *bzz.Swarm
+	swarm   *swarm.Swarm
 	methods map[string]bzzhandler
 	codec   codec.ApiCoder
 }
@@ -64,7 +64,7 @@ func newSwarmOfflineError(method string) error {
 
 // create new bzzApi instance
 func NewBzzApi(stack *node.Node, codec codec.Codec) *bzzApi {
-	var swarm *bzz.Swarm
+	var swarm *swarm.Swarm
 	stack.Service(&swarm)
 	return &bzzApi{swarm, bzzMapping, codec.New(nil)}
 }

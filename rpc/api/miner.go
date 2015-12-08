@@ -17,12 +17,9 @@
 package api
 
 import (
-	// "fmt"
-
 	"github.com/ethereum/ethash"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/eth"
-	// "github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc/codec"
 	"github.com/ethereum/go-ethereum/rpc/shared"
 )

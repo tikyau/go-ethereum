@@ -123,7 +123,8 @@ type Server struct {
 
 	// Hooks for testing. These are useful because we can inhibit
 	// the whole protocol stack.
-	peerRunFunction func(*Peer) DiscReason
+	newTransport func(net.Conn) transport
+	newPeerHook  func(*Peer)
 
 	lock    sync.Mutex // protects running
 	running bool
@@ -156,27 +157,30 @@ const (
 	trustedConn
 )
 
-// used in place of devConn so server tests can substitute a mock.
-type transport interface {
-	// devConn
-	doProtoHandshake(our *protoHandshake) (their *protoHandshake, err error)
-	close(err error)
-	// rlpx.Conn
-	Handshake() error
-	RemoteAddr() net.Addr
-	LocalAddr() net.Addr
-	RemoteID() *ecdsa.PublicKey
-}
-
 // conn wraps a network connection with information gathered
 // during the two handshakes.
 type conn struct {
+	fd net.Conn
 	transport
-	id    discover.NodeID
 	flags connFlag
-	cont  chan error // The run loop uses cont to signal errors to setupConn.
-	caps  []Cap      // valid after the protocol handshake
-	name  string     // valid after the protocol handshake
+	cont  chan error      // The run loop uses cont to signal errors to setupConn.
+	id    discover.NodeID // valid after the encryption handshake
+	caps  []Cap           // valid after the protocol handshake
+	name  string          // valid after the protocol handshake
+}
+
+type transport interface {
+	// The two handshakes.
+	doEncHandshake(prv *ecdsa.PrivateKey, dialDest *discover.Node) (discover.NodeID, error)
+	doProtoHandshake(our *protoHandshake) (*protoHandshake, error)
+	// The MsgReadWriter can only be used after the encryption
+	// handshake has completed. The code uses conn.id to track this
+	// by setting it to a non-nil value after the encryption handshake.
+	MsgReadWriter
+	// transports must provide Close because we use MsgPipe in some of
+	// the tests. Closing the actual network connection doesn't do
+	// anything in those tests because NsgPipe doesn't use it.
+	close(err error)
 }
 
 func (c *conn) String() string {
@@ -184,7 +188,7 @@ func (c *conn) String() string {
 	if (c.id != discover.NodeID{}) {
 		s += fmt.Sprintf(" %x", c.id[:8])
 	}
-	s += " " + c.RemoteAddr().String()
+	s += " " + c.fd.RemoteAddr().String()
 	return s
 }
 
@@ -309,6 +313,9 @@ func (srv *Server) Start() (err error) {
 	// static fields
 	if srv.PrivateKey == nil {
 		return fmt.Errorf("Server.PrivateKey must be set to a non-nil key")
+	}
+	if srv.newTransport == nil {
+		srv.newTransport = newRLPX
 	}
 	if srv.Dialer == nil {
 		srv.Dialer = &net.Dialer{Timeout: defaultDialTimeout}
@@ -498,7 +505,7 @@ running:
 	}
 	// Disconnect all peers.
 	for _, p := range peers {
-		p.conn.close(DiscQuitting)
+		p.Disconnect(DiscQuitting)
 	}
 	// Wait for peers to shut down. Pending connections and tasks are
 	// not handled here and will terminate soon-ish because srv.quit
@@ -581,7 +588,7 @@ func (srv *Server) listenLoop() {
 		// Spawn the handler. It will give the slot back when the connection
 		// has been established.
 		go func() {
-			srv.setupConn(newDevConn(fd, srv.PrivateKey, nil), inboundConn, nil)
+			srv.setupConn(fd, inboundConn, nil)
 			slots <- struct{}{}
 		}()
 	}
@@ -590,24 +597,24 @@ func (srv *Server) listenLoop() {
 // setupConn runs the handshakes and attempts to add the connection
 // as a peer. It returns when the connection has been added as a peer
 // or the handshakes have failed.
-func (srv *Server) setupConn(t transport, flags connFlag, dialDest *discover.Node) {
+func (srv *Server) setupConn(fd net.Conn, flags connFlag, dialDest *discover.Node) {
 	// Prevent leftover pending conns from entering the handshake.
 	srv.lock.Lock()
 	running := srv.running
 	srv.lock.Unlock()
-	c := &conn{transport: t, flags: flags, cont: make(chan error)}
+	c := &conn{fd: fd, transport: srv.newTransport(fd), flags: flags, cont: make(chan error)}
 	if !running {
 		c.close(errServerStopped)
 		return
 	}
 	// Run the encryption handshake.
-	if err := c.Handshake(); err != nil {
-		glog.V(logger.Debug).Infof("%v failed enc handshake: %v", c, err)
+	var err error
+	if c.id, err = c.doEncHandshake(srv.PrivateKey, dialDest); err != nil {
+		glog.V(logger.Debug).Infof("%v faild enc handshake: %v", c, err)
 		c.close(err)
 		return
 	}
 	// For dialed connections, check that the remote public key matches.
-	c.id = discover.PubkeyID(c.RemoteID())
 	if dialDest != nil && c.id != dialDest.ID {
 		c.close(DiscUnexpectedIdentity)
 		glog.V(logger.Debug).Infof("%v dialed identity mismatch, want %x", c, dialDest.ID[:8])
@@ -668,17 +675,15 @@ func (srv *Server) runPeer(p *Peer) {
 		NumConnections:      srv.PeerCount(),
 	})
 
-	var reason DiscReason
-	if srv.peerRunFunction != nil {
-		reason = srv.peerRunFunction(p)
-	} else {
-		reason = p.run()
+	if srv.newPeerHook != nil {
+		srv.newPeerHook(p)
 	}
+	discreason := p.run()
 	// Note: run waits for existing peers to be sent on srv.delpeer
 	// before returning, so this send should not select on srv.quit.
 	srv.delpeer <- p
 
-	glog.V(logger.Debug).Infof("Removed %v (%v)\n", p, reason)
+	glog.V(logger.Debug).Infof("Removed %v (%v)\n", p, discreason)
 	srvjslog.LogJson(&logger.P2PDisconnected{
 		RemoteId:       p.ID().String(),
 		NumConnections: srv.PeerCount(),
