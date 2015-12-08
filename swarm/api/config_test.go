@@ -11,10 +11,10 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-const (
+var (
 	hexprvkey     = "65138b2aa745041b372153550584587da326ab440576b2a1191dd95cee30039c"
 	defaultConfig = `{
-    "ChunkDbPath": "TMPDIR/0d2f62485607cf38d9d795d93682a517661e513e/chunks",
+    "ChunkDbPath": "` + filepath.Join("TMPDIR", "0d2f62485607cf38d9d795d93682a517661e513e", "chunks") + `",
     "DbCapacity": 5000000,
     "CacheCapacity": 5000,
     "Radius": 0,
@@ -23,7 +23,7 @@ const (
     "JoinTimeout": 120,
     "SplitTimeout": 120,
     "CallInterval": 10000000000,
-    "KadDbPath": "TMPDIR/0d2f62485607cf38d9d795d93682a517661e513e/bzz-peers.json",
+    "KadDbPath": "` + filepath.Join("TMPDIR", "0d2f62485607cf38d9d795d93682a517661e513e", "bzz-peers.json") + `",
     "MaxProx": 10,
     "ProxBinSize": 8,
     "BucketSize": 3,
@@ -44,7 +44,8 @@ const (
         "Contract": "0x0000000000000000000000000000000000000000",
         "Beneficiary": "0x0d2f62485607cf38d9d795d93682a517661e513e"
     },
-    "RequestDbPath": "TMPDIR/0d2f62485607cf38d9d795d93682a517661e513e/requests",
+    "RequestDbPath": "` + filepath.Join("TMPDIR", "0d2f62485607cf38d9d795d93682a517661e513e", "requests") + `",
+    "RequestDbBatchSize": 512,
     "KeyBufferSize": 1024,
     "SyncBatchSize": 128,
     "SyncBufferSize": 128,
@@ -63,7 +64,7 @@ const (
         true,
         false
     ],
-    "Path": "TMPDIR/0d2f62485607cf38d9d795d93682a517661e513e",
+    "Path": "` + filepath.Join("TMPDIR", "0d2f62485607cf38d9d795d93682a517661e513e") + `",
     "Port": "8500",
     "PublicKey": "0x045f5cfd26692e48d0017d380349bcf50982488bc11b5145f3ddf88b24924299048450542d43527fbe29a5cb32f38d62755393ac002e6bfdd71b8d7ba725ecd7a3",
     "BzzKey": "0xe861964402c0b78e2d44098329b8545726f215afa737d803714a4338552fcb81"
@@ -71,7 +72,7 @@ const (
 )
 
 func TestConfigWriteRead(t *testing.T) {
-	tmp, err := ioutil.TempDir("", "bzz-test")
+	tmp, err := ioutil.TempDir(os.TempDir(), "bzz-test")
 	if err != nil {
 		t.Fatal(err)
 	}
