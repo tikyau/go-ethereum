@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/kademlia"
 	"github.com/ethereum/go-ethereum/logger"
 	"github.com/ethereum/go-ethereum/logger/glog"
 	"github.com/ethereum/go-ethereum/p2p/discover"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 )
 
 // Hive is the logistic manager of the swarm
@@ -25,7 +25,7 @@ import (
 
 type Hive struct {
 	listenAddr   func() string
-	callInterval uint
+	callInterval uint64
 	id           discover.NodeID
 	addr         kademlia.Address
 	kad          *kademlia.Kademlia
@@ -42,7 +42,7 @@ const (
 )
 
 type HiveParams struct {
-	CallInterval uint
+	CallInterval uint64
 	KadDbPath    string
 	*kademlia.KadParams
 }
