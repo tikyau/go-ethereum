@@ -8,25 +8,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/logger"
+	"github.com/ethereum/go-ethereum/logger/glog"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 )
+
+func init() {
+	glog.SetV(0)
+	glog.SetToStderr(true)
+}
 
 type testSyncDb struct {
 	*syncDb
 	c         int
-	deliverC  chan bool
 	t         *testing.T
+	fromDb    chan bool
 	delivered [][]byte
-	saved     []bool
+	sent      []int
 	dbdir     string
-	total     int
 	at        int
 }
 
-func newTestSyncDb(priority, bufferSize int, dbdir string, t *testing.T) *testSyncDb {
+func newTestSyncDb(priority, bufferSize, batchSize int, dbdir string, t *testing.T) *testSyncDb {
 	if len(dbdir) == 0 {
-		tmp, err := ioutil.TempDir(os.TempDir(), "syndbtest")
+		tmp, err := ioutil.TempDir(os.TempDir(), "syncdb-test")
 		if err != nil {
 			t.Fatalf("unable to create temporary direcory %v: %v", tmp, err)
 		}
@@ -37,16 +43,15 @@ func newTestSyncDb(priority, bufferSize int, dbdir string, t *testing.T) *testSy
 		t.Fatalf("unable to create db: %v", err)
 	}
 	self := &testSyncDb{
-		deliverC: make(chan bool),
-		dbdir:    dbdir,
-		t:        t,
+		fromDb: make(chan bool),
+		dbdir:  dbdir,
+		t:      t,
 	}
 	h := crypto.Sha3Hash([]byte{0})
 	key := storage.Key(h[:])
-	self.syncDb = newSyncDb(db, key, uint(priority), uint(bufferSize), self.deliver)
+	self.syncDb = newSyncDb(db, key, uint(priority), uint(bufferSize), uint(batchSize), self.deliver)
 	// kick off db iterator right away, if no items on db this will allow
 	// reading from the buffer
-	go self.syncDb.iterate(self.deliver)
 	return self
 
 }
@@ -59,22 +64,38 @@ func (self *testSyncDb) close() {
 func (self *testSyncDb) push(n int) {
 	for i := 0; i < n; i++ {
 		self.buffer <- storage.Key(crypto.Sha3([]byte{byte(self.c)}))
+		self.sent = append(self.sent, self.c)
 		self.c++
+	}
+	glog.V(logger.Debug).Infof("pushed %v requests", n)
+}
+
+func (self *testSyncDb) draindb() {
+	it := self.db.NewIterator()
+	defer it.Release()
+	for {
+		it.Seek(self.start)
+		if !it.Valid() {
+			return
+		}
+		k := it.Key()
+		if len(k) == 0 || k[0] == 1 {
+			return
+		}
+		it.Release()
+		it = self.db.NewIterator()
 	}
 }
 
 func (self *testSyncDb) deliver(req interface{}, quit chan bool) bool {
+	_, db := req.(*syncDbEntry)
+	key, _, _, _, err := parseRequest(req)
+	if err != nil {
+		self.t.Fatalf("unexpected error of key %v: %v", key, err)
+	}
+	self.delivered = append(self.delivered, key)
 	select {
-	case <-self.deliverC:
-		_, ok := req.(*syncDbEntry)
-		self.saved = append(self.saved, ok)
-		key, _, _, _, err := parseRequest(req)
-		if err != nil {
-			self.t.Fatalf("unexpected error of key %v: %v", key, err)
-		}
-		r := make([]byte, 32)
-		copy(r, key[:])
-		self.delivered = append(self.delivered, r)
+	case self.fromDb <- db:
 		return true
 	case <-quit:
 		return false
@@ -82,30 +103,22 @@ func (self *testSyncDb) deliver(req interface{}, quit chan bool) bool {
 }
 
 func (self *testSyncDb) expect(n int, db bool) {
-	var attempts int
 	var ok bool
 	// for n items
-	for i := 0; i < n; {
-		// wait till item appears for attempts * 10 ms
-		if self.at == len(self.saved) {
-			if attempts == 0 {
-				self.deliverC <- true
-			}
-			attempts++
-			if attempts == 100 {
-				self.t.Fatalf("timed out: expected %v, got %v", len(self.saved), len(self.delivered))
-			}
-			time.Sleep(1 * time.Millisecond)
-			continue
+	for i := 0; i < n; i++ {
+		ok = <-self.fromDb
+		if self.at+1 > len(self.delivered) {
+			self.t.Fatalf("expected %v, got %v", self.at+1, len(self.delivered))
 		}
-		attempts = 0
-		i++
-		ok = self.saved[self.at]
+		if len(self.sent) > self.at && !bytes.Equal(crypto.Sha3([]byte{byte(self.sent[self.at])}), self.delivered[self.at]) {
+			self.t.Fatalf("expected delivery %v/%v/%v to be hash of  %v, from db: %v = %v", i, n, self.at, self.sent[self.at], ok, db)
+			glog.V(logger.Debug).Infof("%v/%v/%v to be hash of  %v, from db: %v = %v", i, n, self.at, self.sent[self.at], ok, db)
+		}
 		if !ok && db {
-			self.t.Fatalf("expected delivery %v/%v from db", self.at, self.total)
+			self.t.Fatalf("expected delivery %v/%v/%v from db", i, n, self.at)
 		}
 		if ok && !db {
-			self.t.Fatalf("expected delivery %v/%v from cache", self.at, self.total)
+			self.t.Fatalf("expected delivery %v/%v/%v from cache", i, n, self.at)
 		}
 		self.at++
 	}
@@ -114,43 +127,54 @@ func (self *testSyncDb) expect(n int, db bool) {
 func TestSyncDb(t *testing.T) {
 	priority := High
 	bufferSize := 5
-	s := newTestSyncDb(priority, bufferSize, "", t)
+	batchSize := 2 * bufferSize
+	s := newTestSyncDb(priority, bufferSize, batchSize, "", t)
 	defer s.close()
 	defer s.stop()
+	s.dbRead(false, 0, s.deliver)
+	s.draindb()
 
 	s.push(4)
 	s.expect(1, false)
-
-	s.push(2)
-	s.expect(5, false)
-
-	s.push(4)
-	s.expect(3, true)
-
+	// 3 in buffer
+	time.Sleep(100 * time.Millisecond)
 	s.push(3)
+	// push over limit
+	s.expect(1, false)
+	// one popped from the buffer, then contention detected
 	s.expect(4, true)
-
-	s.push(3)
-	s.expect(3, false)
-
+	s.push(4)
+	s.expect(5, true)
+	// depleted db, switch back to buffer
+	s.draindb()
 	s.push(5)
 	s.expect(4, false)
-
+	s.push(3)
+	s.expect(4, false)
+	// buffer depleted
+	time.Sleep(100 * time.Millisecond)
+	s.push(6)
+	s.expect(1, false)
+	// push into buffer full, switch to db
+	s.expect(5, true)
+	s.draindb()
 	s.push(1)
 	s.expect(1, false)
-	s.expect(1, true)
 }
 
 func TestSaveSyncDb(t *testing.T) {
-	amount := 500
+	amount := 30
 	priority := High
 	bufferSize := amount
-	s := newTestSyncDb(priority, bufferSize, "", t)
+	batchSize := 10
+	s := newTestSyncDb(priority, bufferSize, batchSize, "", t)
+	go s.dbRead(false, 0, s.deliver)
 	s.push(amount)
 	s.stop()
 	s.db.Close()
 
-	s = newTestSyncDb(priority, bufferSize, s.dbdir, t)
+	s = newTestSyncDb(priority, bufferSize, batchSize, s.dbdir, t)
+	go s.dbRead(false, 0, s.deliver)
 	s.expect(amount, true)
 	for i, key := range s.delivered {
 		expKey := crypto.Sha3([]byte{byte(i)})
@@ -158,7 +182,6 @@ func TestSaveSyncDb(t *testing.T) {
 			t.Fatalf("delivery %v expected to be key %x, got %x", i, expKey, key)
 		}
 	}
-
 	s.push(amount)
 	s.expect(amount, false)
 	for i := amount; i < 2*amount; i++ {
@@ -171,10 +194,11 @@ func TestSaveSyncDb(t *testing.T) {
 	s.stop()
 	s.db.Close()
 
-	s = newTestSyncDb(priority, bufferSize, s.dbdir, t)
+	s = newTestSyncDb(priority, bufferSize, batchSize, s.dbdir, t)
 	defer s.close()
 	defer s.stop()
 
+	go s.dbRead(false, 0, s.deliver)
 	s.push(1)
 	s.expect(1, false)
 

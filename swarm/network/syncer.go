@@ -6,18 +6,19 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common/kademlia"
 	"github.com/ethereum/go-ethereum/logger"
 	"github.com/ethereum/go-ethereum/logger/glog"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 )
 
 // syncer parameters (global, not peer specific) default values
 const (
-	keyBufferSize  = 1024 // size of buffer  for unsynced keys
-	syncBatchSize  = 128  // maximum batchsize for outgoing requests
-	syncBufferSize = 128  // size of buffer  for delivery requests
-	syncCacheSize  = 1024 // cache capacity to store request queue in memory
+	requestDbBatchSize = 512  // size of batch before written to request db
+	keyBufferSize      = 1024 // size of buffer  for unsynced keys
+	syncBatchSize      = 128  // maximum batchsize for outgoing requests
+	syncBufferSize     = 128  // size of buffer  for delivery requests
+	syncCacheSize      = 1024 // cache capacity to store request queue in memory
 )
 
 // priorities
@@ -25,7 +26,7 @@ const (
 	Low        = iota // 0
 	Medium            // 1
 	High              // 2
-	priorities        //= 3
+	priorities        // 3 number of priority levels
 )
 
 // request types
@@ -33,12 +34,13 @@ const (
 	DeliverReq   = iota // 0
 	PushReq             // 1
 	PropagateReq        // 2
-	SyncReq             // 3
-	StaleSyncReq        // 4
+	HistoryReq          // 3
+	BacklogReq          // 4
 )
 
+// json serialisable struct to record the syncronisation state between 2 peers
 type syncState struct {
-	*storage.DbSyncState //
+	*storage.DbSyncState // embeds the following 4 fields:
 	// Start      Key    // lower limit of address space
 	// Stop       Key    // upper limit of address space
 	// First      uint64 // counter taken from last sync state
@@ -50,6 +52,7 @@ type syncState struct {
 	synced     chan bool   // signal that sync stage finished
 }
 
+// wrapper of db-s to provide mockable custom local chunk store access to syncer
 type DbAccess struct {
 	db  *storage.DbStore
 	loc *storage.LocalStore
@@ -59,14 +62,22 @@ func NewDbAccess(loc *storage.LocalStore) *DbAccess {
 	return &DbAccess{loc.DbStore.(*storage.DbStore), loc}
 }
 
+// to obtain the chunks from key or request db entry only
 func (self *DbAccess) get(key storage.Key) (*storage.Chunk, error) {
 	return self.loc.Get(key)
 }
 
+// current storage counter of chunk db
 func (self *DbAccess) counter() uint64 {
 	return self.db.Counter()
 }
 
+// implemented by dbStoreSyncIterator
+type keyIterator interface {
+	Next() storage.Key
+}
+
+// generator function for iteration by address range and storage counter
 func (self *DbAccess) iterator(s *syncState) keyIterator {
 	it, err := self.db.NewSyncIterator(*(s.DbSyncState))
 	if err != nil {
@@ -95,31 +106,28 @@ func (self syncState) String() string {
 
 // syncer parameters (global, not peer specific)
 type SyncParams struct {
-	RequestDbPath  string // path for request db (leveldb)
-	KeyBufferSize  uint   // size of key buffer
-	SyncBatchSize  uint   // maximum batchsize for outgoing requests
-	SyncBufferSize uint   // size of buffer for
-	SyncCacheSize  uint   // cache capacity to store request queue in memory
-	SyncPriorities []uint // list of priority levels for req types 0-3
-	SyncModes      []bool // list of sync modes for  for req types 0-3
+	RequestDbPath      string // path for request db (leveldb)
+	RequestDbBatchSize uint   // nuber of items before batch is saved to requestdb
+	KeyBufferSize      uint   // size of key buffer
+	SyncBatchSize      uint   // maximum batchsize for outgoing requests
+	SyncBufferSize     uint   // size of buffer for
+	SyncCacheSize      uint   // cache capacity to store request queue in memory
+	SyncPriorities     []uint // list of priority levels for req types 0-3
+	SyncModes          []bool // list of sync modes for  for req types 0-3
 }
 
 // constructor with default values
 func NewSyncParams(bzzdir string) *SyncParams {
 	return &SyncParams{
-		RequestDbPath:  filepath.Join(bzzdir, "requests"),
-		KeyBufferSize:  keyBufferSize,
-		SyncBufferSize: syncBufferSize,
-		SyncBatchSize:  syncBatchSize,
-		SyncCacheSize:  syncCacheSize,
-		SyncPriorities: []uint{High, Medium, Medium, Low, Low},
-		SyncModes:      []bool{true, true, true, true, false},
+		RequestDbPath:      filepath.Join(bzzdir, "requests"),
+		RequestDbBatchSize: requestDbBatchSize,
+		KeyBufferSize:      keyBufferSize,
+		SyncBufferSize:     syncBufferSize,
+		SyncBatchSize:      syncBatchSize,
+		SyncCacheSize:      syncCacheSize,
+		SyncPriorities:     []uint{High, Medium, Medium, Low, Low},
+		SyncModes:          []bool{true, true, true, true, false},
 	}
-}
-
-// implemented by dbStoreSyncIterator
-type keyIterator interface {
-	Next() storage.Key
 }
 
 // syncer is the agent that manages content distribution/storage replication/chunk storeRequest forwarding
@@ -141,13 +149,15 @@ type syncer struct {
 	keys       [priorities]chan interface{}          // buffer for unsynced keys
 	deliveries [priorities]chan *storeRequestMsgData // delivery
 
-	// bzz protocol instance outgoing message callbacks
+	// bzz protocol instance outgoing message callbacks (mockable for testing)
 	unsyncedKeys func([]*syncRequest, *syncState) error // send unsyncedKeysMsg
 	store        func(*storeRequestMsgData) error       // send storeRequestMsg
 }
 
 // a syncer instance is linked to each peer connection
-// constructor is called from protocol,
+// constructor is called from protocol after successful handshake
+// the returned instance is attached to the peer and can be called
+// by the forwarder
 func newSyncer(
 	db *storage.LDBDatabase, remotekey storage.Key,
 	dbAccess *DbAccess,
@@ -159,6 +169,7 @@ func newSyncer(
 
 	syncBufferSize := params.SyncBufferSize
 	keyBufferSize := params.KeyBufferSize
+	dbBatchSize := params.RequestDbBatchSize
 
 	self := &syncer{
 		key:             remotekey,
@@ -177,7 +188,8 @@ func newSyncer(
 	for i := 0; i < priorities; i++ {
 		self.keys[i] = make(chan interface{}, keyBufferSize)
 		self.deliveries[i] = make(chan *storeRequestMsgData)
-		self.queues[i] = newSyncDb(db, remotekey, uint(i), syncBufferSize, self.deliver(uint(i)))
+		// initialise a syncdb instance for each priority queue
+		self.queues[i] = newSyncDb(db, remotekey, uint(i), syncBufferSize, dbBatchSize, self.deliver(uint(i)))
 	}
 	self.state = state
 	glog.V(logger.Info).Infof("[BZZ] syncer started: %v", state)
@@ -208,6 +220,7 @@ func newSyncState(start, stop kademlia.Address, count uint64) *syncState {
 	}
 }
 
+// metadata serialisation
 func encodeSync(state *syncState) (*json.RawMessage, error) {
 	data, err := json.MarshalIndent(state, "", " ")
 	if err != nil {
@@ -239,9 +252,14 @@ func decodeSync(meta *json.RawMessage) (*syncState, error) {
    * but within the order respects earlier priority level of request
  * after all items are consumed for a priority level, the the respective
   queue for delivery requests is open (this way new reqs not written to db)
+  (TODO: this should be checked)
  * the sync state provided by the remote peer is used to sync history
    * all the backlog from earlier (aborted) syncing is completed starting from latest
-   * then all backlog upto last disconnect
+   * if Last  < LastSeenAt then all items in between then process all
+     backlog from upto last disconnect
+   * if Last > 0 &&
+
+ sync is called from the syncer constructor and is not supposed to be used externally
 */
 func (self *syncer) sync() {
 	state := self.state
@@ -255,11 +273,9 @@ func (self *syncer) sync() {
 	}
 	glog.V(logger.Debug).Infof("[BZZ] syncer[%v]: start replaying stale requests from request db", self.key.Log())
 	for p := priorities - 1; p >= 0; p-- {
-		self.queues[p].iterate(self.replay())
+		self.queues[p].dbRead(false, 0, self.replay())
 	}
 	glog.V(logger.Debug).Infof("[BZZ] syncer[%v]: done replaying stale requests from request db", self.key.Log())
-	// start syncdb on each priority level
-	// only called once
 
 	// unless peer is synced sync unfinished history beginning on
 	if !state.Synced {
@@ -386,7 +402,7 @@ func (self *syncer) sendUnsyncedKeys() {
 
 // assembles a new batch of unsynced keys
 // * keys are drawn from the key buffers in order of priority queue
-// * if the queues of priority for History (SyncReq) or higher are depleted,
+// * if the queues of priority for History (HistoryReq) or higher are depleted,
 //   historical data is used so historical items are lower priority within
 //   their priority group.
 // * Order of historical data is unspecified
@@ -401,7 +417,7 @@ func (self *syncer) syncUnsyncedKeys() {
 	keys := self.keys[priority]
 	var newUnsyncedKeys, deliveryRequest chan bool
 	keyCounts := make([]int, priorities)
-	histPrior := self.SyncPriorities[SyncReq]
+	histPrior := self.SyncPriorities[HistoryReq]
 	syncStates := self.syncStates
 	state := self.state
 
@@ -485,13 +501,14 @@ LOOP:
 			// signaling that peer is ready to receive unsynced Keys
 			// the channel is set to nil any further writes will be ignored
 			deliveryRequest = nil
-			// this can only happen if keys is
+
 		case <-newUnsyncedKeys:
 			glog.V(logger.Detail).Infof("[BZZ] syncer[%v]: new unsynked keys available", self.key.Log())
 			// this 1 cap channel can wake up the loop
 			// signals that data is available to send if peer is ready to receive
 			newUnsyncedKeys = nil
 			// this can only happen if keys is
+
 		case state, more = <-syncStates:
 			// this resets the state
 			if !more {
@@ -542,6 +559,7 @@ func (self *syncer) syncDeliveries() {
 	var c = [priorities]int{}
 	var n = [priorities]int{}
 	var total, success uint
+
 	for {
 		deliveries = self.deliveries[p]
 		select {
@@ -595,14 +613,11 @@ func (self *syncer) syncDeliveries() {
  * key: from incoming syncRequest
  * syncDbEntry: key,id encoded in db
 
- Could take simply storeRequestMsgData always and here fill in missing
- chunk, id,
-
  If sync mode is on for the type of request, then
  it sends the request to the keys queue of the correct priority
  channel buffered with capacity (SyncBufferSize)
 
- If sync mode is off then, requests are directly sent to requestQueue
+ If sync mode is off then, requests are directly sent to deliveries
 */
 func (self *syncer) addRequest(req interface{}, ty int) {
 	// retrieve priority for request type
@@ -620,6 +635,7 @@ func (self *syncer) addRequest(req interface{}, ty int) {
 func (self *syncer) addKey(req interface{}, priority uint, quit chan bool) bool {
 	select {
 	case self.keys[priority] <- req:
+		// this wakes up the unsynced keys loop if idle
 		select {
 		case self.newUnsyncedKeys <- true:
 		default:
@@ -631,7 +647,7 @@ func (self *syncer) addKey(req interface{}, priority uint, quit chan bool) bool 
 }
 
 // addDelivery queues delivery request for with given priority
-// ie the chunk will be delivered ASAP mod priorities
+// ie the chunk will be delivered ASAP mod priority queueing handled by syncdb
 // requests are persisted across sessions for correct sync
 func (self *syncer) addDelivery(req interface{}, priority uint, quit chan bool) bool {
 	select {
@@ -642,7 +658,8 @@ func (self *syncer) addDelivery(req interface{}, priority uint, quit chan bool) 
 	}
 }
 
-// doDelivery delivers the chunk for the request with given priority ac
+// doDelivery delivers the chunk for the request with given priority
+// without queuing
 func (self *syncer) doDelivery(req interface{}, priority uint, quit chan bool) bool {
 	msgdata, err := self.newStoreRequestMsgData(req)
 	if err != nil {
@@ -666,12 +683,12 @@ func (self *syncer) deliver(priority uint) func(req interface{}, quit chan bool)
 }
 
 // returns the replay function passed on to syncDb
-// depending on sync mode settings for StaleSyncReq,
+// depending on sync mode settings for BacklogReq,
 // re	play of request db backlog sends items via confirmation
 // or directly delivers
 func (self *syncer) replay() func(req interface{}, quit chan bool) bool {
-	sync := self.SyncModes[StaleSyncReq]
-	priority := self.SyncPriorities[StaleSyncReq]
+	sync := self.SyncModes[BacklogReq]
+	priority := self.SyncPriorities[BacklogReq]
 	// sync mode for this type ON
 	if sync {
 		return func(req interface{}, quit chan bool) bool {
@@ -686,7 +703,7 @@ func (self *syncer) replay() func(req interface{}, quit chan bool) bool {
 }
 
 // given a request, extends it to a full storeRequestMsgData
-// see types accepted
+// polimorphic: see addRequest for the types accepted
 func (self *syncer) newStoreRequestMsgData(req interface{}) (*storeRequestMsgData, error) {
 
 	key, id, chunk, sreq, err := parseRequest(req)
