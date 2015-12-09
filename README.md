@@ -1,3 +1,25 @@
+
+# This branch is now FROZEN and DISCONTINUED
+
+swarm PR should be submitted against 
+https://github.com/ethereum/go-ethereum/tree/swarm
+**always rebased on top of current develop**
+
+the ethersphere/bzz branch 
+https://github.com/ethersphere/go-ethereum/tree/bzz
+hosted the first year of swarm development 
+upto POC0.1 
+
+swarm got merged into the main Ethereum go repo's swarm branch
+https://github.com/ethereum/go-ethereum/tree/swarm
+as  https://github.com/ethereum/go-ethereum/commit/59c08bc934f80540107d7d9c2bd2ab0c15ed1889
+with this PR
+https://github.com/ethereum/go-ethereum/pull/2038
+
+a single commit rebased on top of 
+https://github.com/ethereum/go-ethereum/commit/3eebeae363c4367e9892df99f6269c6a17a11f3f
+authored by ethersphere
+
 ## Ethereum Go
 
 Official golang implementation of the Ethereum protocol
