@@ -51,6 +51,7 @@ func TestGetEntry(t *testing.T) {
 	testGetEntry(t, "/a", "", "")
 	testGetEntry(t, "/a/b", "a/b", "a/b")
 	// longest/deepest math
+	testGetEntry(t, "a/b", "-", "a", "a/ba", "a/b/c")
 	testGetEntry(t, "a/b", "a/b", "a", "a/b", "a/bb", "a/b/c")
 	testGetEntry(t, "//a//b//", "a/b", "a", "a/b", "a/bb", "a/b/c")
 }

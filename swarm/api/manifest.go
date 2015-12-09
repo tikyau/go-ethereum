@@ -7,10 +7,10 @@ import (
 	"io"
 	"sync"
 
-	"github.com/ethereum/go-ethereum/swarm/storage"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/logger"
 	"github.com/ethereum/go-ethereum/logger/glog"
+	"github.com/ethereum/go-ethereum/swarm/storage"
 )
 
 const (
@@ -52,7 +52,7 @@ func readManifest(manifestReader storage.SectionReader, hash storage.Key, dpa *s
 	if int64(size) < manifestReader.Size() {
 		glog.V(logger.Detail).Infof("[BZZ] Manifest %v not found.", hash.Log())
 		if err == nil {
-			err = fmt.Errorf("Manifest retrieval cut short: %v &lt; %v", size, manifestReader.Size())
+			err = fmt.Errorf("Manifest retrieval cut short: read %v, expect %v", size, manifestReader.Size())
 		}
 		return
 	}
